@@ -11,7 +11,7 @@
 //!
 //! ```no_run
 //! use libdns::dnspod::DnspodProvider;
-//! use libdns::Provider;
+//! use libdns::{Provider, Zone};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let provider = DnspodProvider::new("your_id,your_token")?;
