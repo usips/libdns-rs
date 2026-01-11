@@ -320,12 +320,18 @@ impl Client {
     /// * `sld` - Second-level domain (e.g., "example" for example.com)
     /// * `tld` - Top-level domain (e.g., "com" for example.com)
     pub async fn get_hosts(&self, sld: &str, tld: &str) -> Result<Vec<HostRecord>, NamecheapError> {
+        #[cfg(debug_assertions)]
+        eprintln!("DEBUG get_hosts: sld='{}', tld='{}'", sld, tld);
+
         let xml = self
             .request(
                 "namecheap.domains.dns.getHosts",
                 &[("SLD", sld), ("TLD", tld)],
             )
             .await?;
+
+        #[cfg(debug_assertions)]
+        eprintln!("DEBUG get_hosts response:\n{}", &xml);
 
         // Check if domain is using Namecheap DNS
         if let Some(using_our_dns) =
@@ -341,6 +347,8 @@ impl Client {
 
         // Parse host records
         let records = parse_host_records(&xml)?;
+        #[cfg(debug_assertions)]
+        eprintln!("DEBUG get_hosts parsed {} records", records.len());
         Ok(records)
     }
 
@@ -359,6 +367,14 @@ impl Client {
         tld: &str,
         records: &[HostRecord],
     ) -> Result<(), NamecheapError> {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "DEBUG set_hosts: sld='{}', tld='{}', {} records",
+            sld,
+            tld,
+            records.len()
+        );
+
         let mut params: Vec<(String, String)> = vec![
             ("SLD".to_string(), sld.to_string()),
             ("TLD".to_string(), tld.to_string()),
@@ -367,6 +383,11 @@ impl Client {
         // Add each record with numbered parameters
         for (i, record) in records.iter().enumerate() {
             let n = i + 1;
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "DEBUG set_hosts record {}: name='{}', type='{}', address='{}', mx_pref={:?}",
+                n, record.name, record.record_type, record.address, record.mx_pref
+            );
             params.push((format!("HostName{}", n), record.name.clone()));
             params.push((format!("RecordType{}", n), record.record_type.clone()));
             params.push((format!("Address{}", n), record.address.clone()));
@@ -383,8 +404,15 @@ impl Client {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        self.request("namecheap.domains.dns.setHosts", &param_refs)
+        let response = self
+            .request("namecheap.domains.dns.setHosts", &param_refs)
             .await?;
+
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "DEBUG set_hosts response (first 1000 chars): {}",
+            &response[..response.len().min(1000)]
+        );
 
         Ok(())
     }
@@ -398,7 +426,9 @@ fn parse_host_records(xml: &str) -> Result<Vec<HostRecord>, NamecheapError> {
     loop {
         match reader.read_event() {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) => {
-                if e.local_name().as_ref() == b"Host" {
+                // Check for "host" (case-insensitive)
+                let local_name = e.local_name();
+                if local_name.as_ref().eq_ignore_ascii_case(b"host") {
                     let mut host_id = String::new();
                     let mut name = String::new();
                     let mut record_type = String::new();

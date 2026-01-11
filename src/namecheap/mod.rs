@@ -355,12 +355,33 @@ impl CreateRecord for NamecheapZone {
             .map_err(CreateRecordError::Custom)?;
 
         // Find the newly created record (last matching host/type/address)
+        // Note: Namecheap may strip trailing dots from CNAME/MX values
+        let expected_address = data.get_api_value().trim_end_matches('.').to_lowercase();
+        let expected_type = data.get_type();
+
+        // Debug: print what we're looking for and what we got
+        #[cfg(debug_assertions)]
+        {
+            eprintln!(
+                "DEBUG: Looking for: host='{}', type='{}', address='{}'",
+                host, expected_type, expected_address
+            );
+            for r in &updated {
+                eprintln!(
+                    "DEBUG:   Found: host='{}', type='{}', address='{}'",
+                    r.name,
+                    r.record_type,
+                    r.address.trim_end_matches('.').to_lowercase()
+                );
+            }
+        }
+
         updated
             .into_iter()
             .filter(|r| {
                 r.name == host
-                    && r.record_type == data.get_type()
-                    && r.address == data.get_api_value()
+                    && r.record_type == expected_type
+                    && r.address.trim_end_matches('.').to_lowercase() == expected_address
             })
             .last()
             .map(|hr| host_record_to_record(hr, &self.domain))

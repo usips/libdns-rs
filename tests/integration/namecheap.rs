@@ -373,6 +373,10 @@ async fn test_txt_record_crud() {
 // =============================================================================
 
 /// Test creating and deleting MX records.
+///
+/// **Note**: Namecheap requires the "Mail Settings" to be configured (e.g., "Custom MX")
+/// before MX records can be managed via the DNS API. If Mail Settings is set to
+/// "No Email Service", MX record operations will silently fail.
 #[tokio::test]
 #[ignore = "requires NAMECHEAP credentials and NAMECHEAP_TEST_DOMAIN in .env"]
 async fn test_mx_record_crud() {
@@ -393,7 +397,7 @@ async fn test_mx_record_crud() {
     let created = zone
         .create_record(&host, &data, 1800)
         .await
-        .expect("Failed to create MX record");
+        .expect("Failed to create MX record - ensure Mail Settings is configured in Namecheap");
 
     println!("  Created record with ID: {}", created.id);
 
