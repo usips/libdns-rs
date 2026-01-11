@@ -5,16 +5,28 @@
 //! # Authentication
 //!
 //! DNSPod uses API tokens for authentication. You can generate a token from the DNSPod console.
-//! The token format is `{id},{token}` (e.g., `730060,e1a8a$f14dc5dcbafd83680b3d2a553c4d553d`).
+//! The token format is `{SecretID},{SecretKey}`.
+//!
+//! # User-Agent Requirement
+//!
+//! DNSPod API mandates a properly formatted User-Agent header that identifies **your application**
+//! (not this library) and includes a contact email address. This is enforced by Tencent and
+//! non-compliance will result in your account being banned from API access.
+//!
+//! The format is: `ProgramName/Version (contact@email.com)`
+//!
+//! See: <https://docs.dnspod.com/api/api-development/>
 //!
 //! # Example
 //!
 //! ```no_run
-//! use libdns::dnspod::DnspodProvider;
+//! use libdns::dnspod::{DnspodProvider, ClientConfig};
 //! use libdns::{Provider, Zone};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let provider = DnspodProvider::new("your_id,your_token")?;
+//! // Configure with YOUR program name and contact email (not the library's)
+//! let config = ClientConfig::new("My DDNS App", "1.0.0", "developer@example.com");
+//! let provider = DnspodProvider::new("your_secret_id,your_secret_key", &config)?;
 //!
 //! // List all zones
 //! let zones = provider.list_zones().await?;
@@ -44,7 +56,7 @@ use crate::{
 
 pub mod api;
 
-pub use api::DnspodError;
+pub use api::{ClientConfig, DnspodError};
 
 const SUPPORTED_RECORD_TYPES: &[&str; 9] =
     &["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "URL", "CAA"];
@@ -66,19 +78,32 @@ impl Clone for DnspodProvider {
 }
 
 impl DnspodProvider {
-    /// Creates a new DNSPod provider with the given API token.
-    ///
-    /// The token should be in the format `{id},{token}`.
+    /// Creates a new DNSPod provider with the given API token and configuration.
     ///
     /// # Arguments
     ///
-    /// * `login_token` - The DNSPod API token in format `{id},{token}`
+    /// * `login_token` - The DNSPod API token in format `{SecretID},{SecretKey}`
+    /// * `config` - Client configuration with User-Agent details (program name, version, email)
+    ///
+    /// # User-Agent Requirement
+    ///
+    /// DNSPod API requires a User-Agent header that identifies your application
+    /// (not this library) and provides a contact email. See [`ClientConfig`].
     ///
     /// # Errors
     ///
     /// Returns an error if the HTTP client cannot be created.
-    pub fn new(login_token: &str) -> Result<Self, Box<dyn StdErr>> {
-        let api_client = api::Client::new(login_token)?;
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use libdns::dnspod::{DnspodProvider, ClientConfig};
+    ///
+    /// let config = ClientConfig::new("My DDNS App", "1.0.0", "me@example.com");
+    /// let provider = DnspodProvider::new("secret_id,secret_key", &config).unwrap();
+    /// ```
+    pub fn new(login_token: &str, config: &api::ClientConfig) -> Result<Self, Box<dyn StdErr>> {
+        let api_client = api::Client::new(login_token, config)?;
         Ok(Self {
             api_client: Arc::new(api_client),
         })

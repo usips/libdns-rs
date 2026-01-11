@@ -8,6 +8,55 @@ use serde::{Deserialize, Serialize};
 
 const DNSPOD_API_URL: &str = "https://api.dnspod.com";
 
+/// Configuration for the DNSPod API client.
+///
+/// DNSPod requires a properly formatted User-Agent header that identifies
+/// your application and provides contact information. This is mandatory
+/// per the [API Development Specifications](https://docs.dnspod.com/api/api-development/).
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    /// The name of your program/application (not the library name).
+    /// Example: "My DDNS Client"
+    pub program_name: String,
+    /// The version of your program/application.
+    /// Example: "1.0.0"
+    pub version: String,
+    /// Contact email for Tencent to reach the API developer.
+    /// Example: "developer@example.com"
+    pub contact_email: String,
+}
+
+impl ClientConfig {
+    /// Creates a new client configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `program_name` - The name of your program (not the library)
+    /// * `version` - Your program's version
+    /// * `contact_email` - Contact email for Tencent to reach you
+    pub fn new(
+        program_name: impl Into<String>,
+        version: impl Into<String>,
+        contact_email: impl Into<String>,
+    ) -> Self {
+        Self {
+            program_name: program_name.into(),
+            version: version.into(),
+            contact_email: contact_email.into(),
+        }
+    }
+
+    /// Builds the User-Agent string per DNSPod API requirements.
+    ///
+    /// Format: `ProgramName/Version (contact@email.com)`
+    pub fn user_agent(&self) -> String {
+        format!(
+            "{}/{} ({})",
+            self.program_name, self.version, self.contact_email
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Client {
     http_client: HttpClient,
@@ -15,16 +64,32 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(login_token: &str) -> Result<Self, Box<dyn Error>> {
+    /// Creates a new DNSPod API client.
+    ///
+    /// # Arguments
+    ///
+    /// * `login_token` - The DNSPod API token in format `{SecretID},{SecretKey}`
+    /// * `config` - Client configuration including User-Agent details
+    ///
+    /// # User-Agent Requirement
+    ///
+    /// DNSPod API requires a properly formatted User-Agent header that identifies
+    /// your application (not this library) and provides your contact email.
+    /// The format is: `ProgramName/Version (contact@email.com)`
+    ///
+    /// See: <https://docs.dnspod.com/api/api-development/>
+    pub fn new(login_token: &str, config: &ClientConfig) -> Result<Self, Box<dyn Error>> {
+        let user_agent = config.user_agent();
         let mut headers = HeaderMap::new();
         headers.insert(
             "Content-Type",
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
-        // UserAgent is required by DNSPod API
+        // UserAgent is required by DNSPod API - must identify the program (not library)
+        // and include developer contact email
         headers.insert(
             "User-Agent",
-            HeaderValue::from_static("libdns-rs/0.1.0 (github.com/lus/libdns-rs)"),
+            HeaderValue::from_str(&user_agent).map_err(|e| Box::new(e) as Box<dyn Error>)?,
         );
 
         let http_client = HttpClient::builder().default_headers(headers).build()?;
