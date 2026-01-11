@@ -73,17 +73,18 @@ impl Client {
             .await
             .map_err(ApiError::Request)?;
 
-        if response.status != "ok" {
-            return Err(ApiError::ApiStatus(
+        match response.status {
+            ApiStatus::Ok => Ok(Self {
+                http_client,
+                base_url,
+                token: response.token.ok_or(ApiError::MissingToken)?,
+            }),
+            ApiStatus::InvalidToken => Err(ApiError::InvalidToken),
+            ApiStatus::TwoFactorRequired => Err(ApiError::TwoFactorRequired),
+            ApiStatus::Error => Err(ApiError::ApiStatus(
                 response.error_message.unwrap_or_default(),
-            ));
+            )),
         }
-
-        Ok(Self {
-            http_client,
-            base_url,
-            token: response.token.ok_or(ApiError::MissingToken)?,
-        })
     }
 
     fn url_with_token(&self, path: &str) -> String {
@@ -454,6 +455,23 @@ pub enum RecordParams {
     },
 }
 
+/// API response status as documented by Technitium.
+/// 
+/// The `status` property can have the following values:
+/// - `ok`: The call was successful.
+/// - `error`: The call failed (additional error properties provided).
+/// - `invalid-token`: Session expired or invalid token provided.
+/// - `2fa-required`: Two-factor authentication OTP was not provided.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApiStatus {
+    Ok,
+    Error,
+    InvalidToken,
+    #[serde(rename = "2fa-required")]
+    TwoFactorRequired,
+}
+
 /// API error types.
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -465,6 +483,12 @@ pub enum ApiError {
 
     #[error("Missing token in login response")]
     MissingToken,
+
+    #[error("Invalid or expired token")]
+    InvalidToken,
+
+    #[error("Two-factor authentication required")]
+    TwoFactorRequired,
 
     #[error("Unauthorized")]
     Unauthorized,
@@ -482,7 +506,7 @@ pub enum ApiError {
 /// Generic API response wrapper.
 #[derive(Debug, Deserialize)]
 pub struct ApiResponse<T> {
-    pub status: String,
+    pub status: ApiStatus,
     #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
     pub response: Option<T>,
@@ -490,19 +514,15 @@ pub struct ApiResponse<T> {
 
 impl<T> ApiResponse<T> {
     pub fn into_result(self) -> Result<T, ApiError> {
-        if self.status == "ok" {
-            self.response
-                .ok_or(ApiError::ApiStatus("Missing response data".to_string()))
-        } else {
-            let msg = self.error_message.unwrap_or_default();
-            if msg.contains("not authorized") || msg.contains("unauthorized") {
-                Err(ApiError::Unauthorized)
-            } else if msg.contains("not found") || msg.contains("does not exist") {
-                Err(ApiError::NotFound)
-            } else if msg.contains("invalid") && msg.contains("domain") {
-                Err(ApiError::InvalidDomainName)
-            } else {
-                Err(ApiError::ApiStatus(msg))
+        match self.status {
+            ApiStatus::Ok => self
+                .response
+                .ok_or(ApiError::ApiStatus("Missing response data".to_string())),
+            ApiStatus::InvalidToken => Err(ApiError::InvalidToken),
+            ApiStatus::TwoFactorRequired => Err(ApiError::TwoFactorRequired),
+            ApiStatus::Error => {
+                let msg = self.error_message.unwrap_or_default();
+                Err(classify_error_message(&msg))
             }
         }
     }
@@ -511,34 +531,50 @@ impl<T> ApiResponse<T> {
 /// API response without a response body (for delete/enable/disable operations).
 #[derive(Debug, Deserialize)]
 pub struct EmptyApiResponse {
-    pub status: String,
+    pub status: ApiStatus,
     #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
 }
 
 impl EmptyApiResponse {
     pub fn into_result(self) -> Result<(), ApiError> {
-        if self.status == "ok" {
-            Ok(())
-        } else {
-            let msg = self.error_message.unwrap_or_default();
-            if msg.contains("not authorized") || msg.contains("unauthorized") {
-                Err(ApiError::Unauthorized)
-            } else if msg.contains("not found") || msg.contains("does not exist") {
-                Err(ApiError::NotFound)
-            } else if msg.contains("invalid") && msg.contains("domain") {
-                Err(ApiError::InvalidDomainName)
-            } else {
-                Err(ApiError::ApiStatus(msg))
+        match self.status {
+            ApiStatus::Ok => Ok(()),
+            ApiStatus::InvalidToken => Err(ApiError::InvalidToken),
+            ApiStatus::TwoFactorRequired => Err(ApiError::TwoFactorRequired),
+            ApiStatus::Error => {
+                let msg = self.error_message.unwrap_or_default();
+                Err(classify_error_message(&msg))
             }
         }
+    }
+}
+
+/// Classify an error message into a specific error type.
+/// 
+/// Note: This is still string-based because Technitium's API doesn't provide
+/// structured error codes—only human-readable error messages. This is the best
+/// we can do without upstream API changes.
+fn classify_error_message(msg: &str) -> ApiError {
+    let msg_lower = msg.to_lowercase();
+    if msg_lower.contains("not authorized") || msg_lower.contains("unauthorized") {
+        ApiError::Unauthorized
+    } else if msg_lower.contains("not found")
+        || msg_lower.contains("does not exist")
+        || msg_lower.contains("no such zone")
+    {
+        ApiError::NotFound
+    } else if msg_lower.contains("invalid") && msg_lower.contains("domain") {
+        ApiError::InvalidDomainName
+    } else {
+        ApiError::ApiStatus(msg.to_string())
     }
 }
 
 /// Login response.
 #[derive(Debug, Deserialize)]
 pub struct LoginResponse {
-    pub status: String,
+    pub status: ApiStatus,
     #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
     pub token: Option<String>,
