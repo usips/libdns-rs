@@ -10,8 +10,12 @@
 //!
 //! # Available Provider Tests
 //!
+//! - `cloudflare`: Cloudflare DNS API (using API token)
 //! - `dnspod`: DNSPod legacy API (using API tokens)
 //! - `tencent`: Tencent Cloud DNSPod API (using SecretId/SecretKey)
+
+#[cfg(feature = "cloudflare")]
+mod cloudflare;
 
 #[cfg(feature = "dnspod")]
 mod dnspod;

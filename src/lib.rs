@@ -41,6 +41,9 @@ pub mod dnspod;
 #[cfg(feature = "tencent")]
 pub mod tencent;
 
+#[cfg(feature = "cloudflare")]
+pub mod cloudflare;
+
 #[cfg(feature = "hetzner")]
 pub mod hetzner;
 

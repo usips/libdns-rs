@@ -31,6 +31,7 @@ default = ["default-tls"]
 
 dnspod = ["serde", "dep:reqwest", "serde_json"]
 tencent = ["serde", "dep:reqwest", "serde_json", "sha2", "hmac", "hex", "chrono"]
+cloudflare = ["serde", "dep:reqwest", "serde_json"]
 hetzner = ["serde", "dep:reqwest"]
 technitium-dns = ["serde", "dep:reqwest", "serde_json"]
 
