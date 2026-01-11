@@ -278,6 +278,18 @@ impl RecordData {
             RecordData::Other { value, .. } => value.clone(),
         }
     }
+
+    /// Returns the record value formatted for DNS provider APIs.
+    ///
+    /// This differs from [`get_value`](Self::get_value) in that:
+    /// - MX records return only the mail server (priority is sent separately)
+    /// - Values are formatted as expected by typical DNS APIs
+    pub fn get_api_value(&self) -> String {
+        match self {
+            RecordData::MX { mail_server, .. } => mail_server.clone(),
+            _ => self.get_value(),
+        }
+    }
 }
 
 /// Represents a DNS record.

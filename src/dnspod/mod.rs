@@ -56,7 +56,7 @@ use crate::{
 
 pub mod api;
 
-pub use api::{ClientConfig, DnspodError};
+pub use api::{ClientConfig, DnspodError, RecordInfoWithTtl, RecordWithTtl};
 
 const SUPPORTED_RECORD_TYPES: &[&str; 9] =
     &["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "URL", "CAA"];
@@ -302,8 +302,8 @@ impl Zone for DnspodZone {
 
                     records.extend(
                         api_records
-                            .into_iter()
-                            .map(|r| record_to_generic(r, default_ttl)),
+                            .iter()
+                            .map(|r| crate::Record::from(api::RecordWithTtl::new(r, default_ttl))),
                     );
 
                     // Check if we've retrieved all records
@@ -345,7 +345,10 @@ impl Zone for DnspodZone {
                 DnspodError::Request(_) => RetrieveRecordError::Custom(err),
             })?;
 
-        Ok(record_info_to_generic(response.record, default_ttl))
+        Ok(crate::Record::from(api::RecordInfoWithTtl::new(
+            &response.record,
+            default_ttl,
+        )))
     }
 }
 
@@ -370,7 +373,7 @@ impl CreateRecord for DnspodZone {
         };
 
         // Get the record value
-        let value = get_record_value(data);
+        let value = data.get_api_value();
 
         let response = self
             .api_client
@@ -445,39 +448,5 @@ impl DeleteRecord for DnspodZone {
             })?;
 
         Ok(())
-    }
-}
-
-/// Converts an API record to a generic record.
-fn record_to_generic(record: api::Record, default_ttl: u64) -> Record {
-    let typ = record.get_type().to_owned();
-    let ttl = record.get_ttl(default_ttl);
-    let data = RecordData::from_raw(&typ, &record.value);
-
-    Record {
-        id: record.id,
-        host: record.name,
-        data,
-        ttl,
-    }
-}
-
-/// Converts an API record info to a generic record.
-fn record_info_to_generic(record: api::RecordInfo, default_ttl: u64) -> Record {
-    let ttl = record.get_ttl(default_ttl);
-
-    Record {
-        id: record.id,
-        host: record.sub_domain,
-        data: RecordData::from_raw(&record.record_type, &record.value),
-        ttl,
-    }
-}
-
-/// Gets the value string for a record, excluding MX priority (which is sent separately).
-fn get_record_value(data: &RecordData) -> String {
-    match data {
-        RecordData::MX { mail_server, .. } => mail_server.clone(),
-        _ => data.get_value(),
     }
 }

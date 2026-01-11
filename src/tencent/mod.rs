@@ -50,7 +50,7 @@ pub mod api;
 use std::error::Error as StdErr;
 use std::sync::Arc;
 
-pub use api::{ApiError, Client, TencentError};
+pub use api::{ApiError, Client, RecordConversionError, TencentError};
 
 use crate::{
     CreateRecord, CreateRecordError, CreateZone, CreateZoneError, DeleteRecord, DeleteRecordError,
@@ -296,14 +296,8 @@ impl Zone for TencentZone {
             let record_count = record_list.len();
 
             for record in record_list {
-                if let Some(data) = parse_record_data(&record.record_type, &record.value, record.mx)
-                {
-                    records.push(Record {
-                        id: record.record_id.to_string(),
-                        host: record.name.clone(),
-                        data,
-                        ttl: record.ttl,
-                    });
+                if let Ok(r) = Record::try_from(record) {
+                    records.push(r);
                 }
             }
 
@@ -342,16 +336,7 @@ impl Zone for TencentZone {
                 _ => RetrieveRecordError::Custom(err),
             })?;
 
-        let record_info = &response.record_info;
-        let data = parse_record_data(&record_info.record_type, &record_info.value, record_info.mx)
-            .ok_or(RetrieveRecordError::NotFound)?;
-
-        Ok(Record {
-            id: record_info.id.to_string(),
-            host: record_info.sub_domain.clone(),
-            data,
-            ttl: record_info.ttl,
-        })
+        Record::try_from(response.record_info).map_err(|_| RetrieveRecordError::NotFound)
     }
 }
 
@@ -374,7 +359,7 @@ impl CreateRecord for TencentZone {
             _ => None,
         };
 
-        let value = get_record_value(data);
+        let value = data.get_api_value();
 
         let response = self
             .api_client
@@ -437,52 +422,5 @@ impl DeleteRecord for TencentZone {
             })?;
 
         Ok(())
-    }
-}
-
-/// Parses a record value string into RecordData.
-fn parse_record_data(record_type: &str, value: &str, mx: Option<u16>) -> Option<RecordData> {
-    match record_type {
-        "A" => value.parse().ok().map(RecordData::A),
-        "AAAA" => value.parse().ok().map(RecordData::AAAA),
-        "CNAME" => Some(RecordData::CNAME(value.trim_end_matches('.').to_string())),
-        "MX" => Some(RecordData::MX {
-            priority: mx.unwrap_or(10),
-            mail_server: value.trim_end_matches('.').to_string(),
-        }),
-        "NS" => Some(RecordData::NS(value.trim_end_matches('.').to_string())),
-        "TXT" => Some(RecordData::TXT(value.trim_matches('"').to_string())),
-        "SRV" => {
-            // SRV format: "priority weight port target"
-            let parts: Vec<&str> = value.split_whitespace().collect();
-            if parts.len() >= 4 {
-                Some(RecordData::SRV {
-                    priority: parts[0].parse().ok()?,
-                    weight: parts[1].parse().ok()?,
-                    port: parts[2].parse().ok()?,
-                    target: parts[3].trim_end_matches('.').to_string(),
-                })
-            } else {
-                None
-            }
-        }
-        _ => Some(RecordData::Other {
-            typ: record_type.to_string(),
-            value: value.to_string(),
-        }),
-    }
-}
-
-/// Gets the value string for a record, excluding MX priority (which is sent separately).
-fn get_record_value(data: &RecordData) -> String {
-    match data {
-        RecordData::MX { mail_server, .. } => mail_server.clone(),
-        RecordData::SRV {
-            priority,
-            weight,
-            port,
-            target,
-        } => format!("{} {} {} {}", priority, weight, port, target),
-        _ => data.get_value(),
     }
 }

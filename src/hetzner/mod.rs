@@ -221,8 +221,8 @@ impl Zone for HetznerZone {
                     records.append(
                         response
                             .records
-                            .into_iter()
-                            .map(|record| record.into_generic(self.repr.ttl))
+                            .iter()
+                            .map(|record| Record::from(RecordWithTtl::new(record, self.repr.ttl)))
                             .collect::<Vec<Record>>()
                             .as_mut(),
                     );
@@ -268,7 +268,10 @@ impl Zone for HetznerZone {
             return Err(RetrieveRecordError::NotFound);
         }
 
-        Ok(response.record.into_generic(self.repr.ttl))
+        Ok(Record::from(RecordWithTtl::new(
+            &response.record,
+            self.repr.ttl,
+        )))
     }
 }
 
@@ -314,7 +317,10 @@ impl CreateRecord for HetznerZone {
                 CreateRecordError::Custom(err)
             })?;
 
-        Ok(response.record.into_generic(self.repr.ttl))
+        Ok(Record::from(RecordWithTtl::new(
+            &response.record,
+            self.repr.ttl,
+        )))
     }
 }
 
@@ -347,13 +353,36 @@ impl DeleteRecord for HetznerZone {
     }
 }
 
-impl api::Record {
-    pub fn into_generic(self, default_ttl: u64) -> Record {
+/// A Hetzner record with its associated default TTL for conversion.
+///
+/// This wrapper is used to implement `From` for converting Hetzner
+/// [`api::Record`] types to generic [`Record`] types, since the
+/// default TTL is needed when the record doesn't specify one.
+pub struct RecordWithTtl<'a> {
+    /// The Hetzner record.
+    pub record: &'a api::Record,
+    /// The default TTL from the zone.
+    pub default_ttl: u64,
+}
+
+impl<'a> RecordWithTtl<'a> {
+    /// Creates a new record-with-TTL wrapper.
+    pub fn new(record: &'a api::Record, default_ttl: u64) -> Self {
+        Self {
+            record,
+            default_ttl,
+        }
+    }
+}
+
+impl From<RecordWithTtl<'_>> for Record {
+    fn from(value: RecordWithTtl<'_>) -> Self {
+        let record = value.record;
         Record {
-            id: self.id,
-            host: self.name,
-            data: RecordData::from_raw(self.typ.as_str(), self.value.as_str()),
-            ttl: self.ttl.unwrap_or(default_ttl),
+            id: record.id.clone(),
+            host: record.name.clone(),
+            data: RecordData::from_raw(record.typ.as_str(), record.value.as_str()),
+            ttl: record.ttl.unwrap_or(value.default_ttl),
         }
     }
 }

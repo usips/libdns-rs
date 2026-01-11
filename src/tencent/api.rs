@@ -174,6 +174,28 @@ pub struct RecordListItem {
     pub mx: Option<u16>,
 }
 
+impl TryFrom<&RecordListItem> for crate::Record {
+    type Error = RecordConversionError;
+
+    fn try_from(item: &RecordListItem) -> Result<Self, Self::Error> {
+        let data = parse_record_data(&item.record_type, &item.value, item.mx)?;
+        Ok(crate::Record {
+            id: item.record_id.to_string(),
+            host: item.name.clone(),
+            data,
+            ttl: item.ttl,
+        })
+    }
+}
+
+impl TryFrom<RecordListItem> for crate::Record {
+    type Error = RecordConversionError;
+
+    fn try_from(item: RecordListItem) -> Result<Self, Self::Error> {
+        Self::try_from(&item)
+    }
+}
+
 /// Response for DescribeRecordList.
 #[derive(Debug, Deserialize)]
 pub struct DescribeRecordListResponse {
@@ -216,6 +238,28 @@ pub struct RecordInfo {
     /// Record status.
     #[serde(rename = "Enabled")]
     pub enabled: u8,
+}
+
+impl TryFrom<&RecordInfo> for crate::Record {
+    type Error = RecordConversionError;
+
+    fn try_from(info: &RecordInfo) -> Result<Self, Self::Error> {
+        let data = parse_record_data(&info.record_type, &info.value, info.mx)?;
+        Ok(crate::Record {
+            id: info.id.to_string(),
+            host: info.sub_domain.clone(),
+            data,
+            ttl: info.ttl,
+        })
+    }
+}
+
+impl TryFrom<RecordInfo> for crate::Record {
+    type Error = RecordConversionError;
+
+    fn try_from(info: RecordInfo) -> Result<Self, Self::Error> {
+        Self::try_from(&info)
+    }
 }
 
 /// Response for DescribeRecord.
@@ -677,5 +721,93 @@ impl Client {
 
         self.request("DeleteRecord", &Request { domain, record_id })
             .await
+    }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Error returned when a record cannot be converted to a [`crate::Record`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordConversionError {
+    /// The record type that failed to convert.
+    pub record_type: String,
+    /// Description of what went wrong.
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for RecordConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "failed to convert {} record: {}",
+            self.record_type, self.reason
+        )
+    }
+}
+
+impl std::error::Error for RecordConversionError {}
+
+/// Parses a record value string into [`crate::RecordData`].
+fn parse_record_data(
+    record_type: &str,
+    value: &str,
+    mx: Option<u16>,
+) -> Result<crate::RecordData, RecordConversionError> {
+    use crate::RecordData;
+
+    match record_type {
+        "A" => value
+            .parse()
+            .map(RecordData::A)
+            .map_err(|_| RecordConversionError {
+                record_type: record_type.to_string(),
+                reason: "invalid IPv4 address",
+            }),
+        "AAAA" => value
+            .parse()
+            .map(RecordData::AAAA)
+            .map_err(|_| RecordConversionError {
+                record_type: record_type.to_string(),
+                reason: "invalid IPv6 address",
+            }),
+        "CNAME" => Ok(RecordData::CNAME(value.trim_end_matches('.').to_string())),
+        "MX" => Ok(RecordData::MX {
+            priority: mx.unwrap_or(10),
+            mail_server: value.trim_end_matches('.').to_string(),
+        }),
+        "NS" => Ok(RecordData::NS(value.trim_end_matches('.').to_string())),
+        "TXT" => Ok(RecordData::TXT(value.trim_matches('"').to_string())),
+        "SRV" => {
+            // SRV format: "priority weight port target"
+            let parts: Vec<&str> = value.split_whitespace().collect();
+            if parts.len() >= 4 {
+                Ok(RecordData::SRV {
+                    priority: parts[0].parse().map_err(|_| RecordConversionError {
+                        record_type: record_type.to_string(),
+                        reason: "invalid SRV priority",
+                    })?,
+                    weight: parts[1].parse().map_err(|_| RecordConversionError {
+                        record_type: record_type.to_string(),
+                        reason: "invalid SRV weight",
+                    })?,
+                    port: parts[2].parse().map_err(|_| RecordConversionError {
+                        record_type: record_type.to_string(),
+                        reason: "invalid SRV port",
+                    })?,
+                    target: parts[3].trim_end_matches('.').to_string(),
+                })
+            } else {
+                Err(RecordConversionError {
+                    record_type: record_type.to_string(),
+                    reason: "SRV record requires 4 parts: priority weight port target",
+                })
+            }
+        }
+        _ => Ok(RecordData::Other {
+            typ: record_type.to_string(),
+            value: value.to_string(),
+        }),
     }
 }

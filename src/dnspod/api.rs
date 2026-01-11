@@ -696,6 +696,44 @@ impl Record {
     }
 }
 
+/// A DNSPod record with its associated default TTL for conversion.
+///
+/// This wrapper is used to implement `From` for converting DNSPod
+/// [`Record`] types to generic [`crate::Record`] types, since the
+/// default TTL is needed when the record doesn't specify one.
+pub struct RecordWithTtl<'a> {
+    /// The DNSPod record.
+    pub record: &'a Record,
+    /// The default TTL from the domain.
+    pub default_ttl: u64,
+}
+
+impl<'a> RecordWithTtl<'a> {
+    /// Creates a new record-with-TTL wrapper.
+    pub fn new(record: &'a Record, default_ttl: u64) -> Self {
+        Self {
+            record,
+            default_ttl,
+        }
+    }
+}
+
+impl From<RecordWithTtl<'_>> for crate::Record {
+    fn from(value: RecordWithTtl<'_>) -> Self {
+        let record = value.record;
+        let typ = record.get_type().to_owned();
+        let ttl = record.get_ttl(value.default_ttl);
+        let data = crate::RecordData::from_raw(&typ, &record.value);
+
+        crate::Record {
+            id: record.id.clone(),
+            host: record.name.clone(),
+            data,
+            ttl,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecordInfo {
     #[serde(deserialize_with = "string_or_int::deserialize")]
@@ -726,6 +764,42 @@ impl RecordInfo {
             .as_ref()
             .and_then(|t| t.parse().ok())
             .unwrap_or(default_ttl)
+    }
+}
+
+/// A DNSPod record info with its associated default TTL for conversion.
+///
+/// This wrapper is used to implement `From` for converting DNSPod
+/// [`RecordInfo`] types to generic [`crate::Record`] types, since the
+/// default TTL is needed when the record doesn't specify one.
+pub struct RecordInfoWithTtl<'a> {
+    /// The DNSPod record info.
+    pub record: &'a RecordInfo,
+    /// The default TTL from the domain.
+    pub default_ttl: u64,
+}
+
+impl<'a> RecordInfoWithTtl<'a> {
+    /// Creates a new record-info-with-TTL wrapper.
+    pub fn new(record: &'a RecordInfo, default_ttl: u64) -> Self {
+        Self {
+            record,
+            default_ttl,
+        }
+    }
+}
+
+impl From<RecordInfoWithTtl<'_>> for crate::Record {
+    fn from(value: RecordInfoWithTtl<'_>) -> Self {
+        let record = value.record;
+        let ttl = record.get_ttl(value.default_ttl);
+
+        crate::Record {
+            id: record.id.clone(),
+            host: record.sub_domain.clone(),
+            data: crate::RecordData::from_raw(&record.record_type, &record.value),
+            ttl,
+        }
     }
 }
 

@@ -182,75 +182,125 @@ pub struct CreateRecordRequest {
 /// Supported DNS record types for Cloudflare.
 const SUPPORTED_RECORD_TYPES: &[&str] = &["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SRV"];
 
-impl DnsRecord {
-    /// Converts this Cloudflare DNS record to a generic [`Record`].
-    ///
-    /// Returns `None` if the record type is unsupported or the content cannot be parsed.
-    ///
-    /// # Arguments
-    ///
-    /// * `zone_name` - The zone domain name, used to extract the subdomain from the full record name.
-    pub fn to_record(&self, zone_name: &str) -> Option<crate::Record> {
-        use crate::{Record, RecordData};
-        use std::net::{Ipv4Addr, Ipv6Addr};
+/// Error returned when a record cannot be converted to a [`crate::Record`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordConversionError {
+    /// The record type that failed to convert.
+    pub record_type: String,
+    /// Description of what went wrong.
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for RecordConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "failed to convert {} record: {}",
+            self.record_type, self.reason
+        )
+    }
+}
+
+impl std::error::Error for RecordConversionError {}
+
+/// A DNS record with its associated zone name for conversion.
+///
+/// This wrapper is used to implement `TryFrom` for converting Cloudflare
+/// DNS records to generic [`crate::Record`] types, since the zone name
+/// is needed to extract the subdomain.
+pub struct DnsRecordWithZone<'a> {
+    /// The DNS record.
+    pub record: &'a DnsRecord,
+    /// The zone domain name.
+    pub zone_name: &'a str,
+}
+
+impl<'a> DnsRecordWithZone<'a> {
+    /// Creates a new record-with-zone wrapper.
+    pub fn new(record: &'a DnsRecord, zone_name: &'a str) -> Self {
+        Self { record, zone_name }
+    }
+}
+
+impl TryFrom<DnsRecordWithZone<'_>> for crate::Record {
+    type Error = RecordConversionError;
+
+    fn try_from(value: DnsRecordWithZone<'_>) -> Result<Self, Self::Error> {
+        use crate::RecordData;
+
+        let record = value.record;
+        let zone_name = value.zone_name;
 
         // Extract the subdomain from the full record name
-        let host = if self.name == zone_name {
+        let host = if record.name == zone_name {
             "@".to_string()
-        } else if self.name.ends_with(&format!(".{}", zone_name)) {
-            self.name[..self.name.len() - zone_name.len() - 1].to_string()
+        } else if record.name.ends_with(&format!(".{}", zone_name)) {
+            record.name[..record.name.len() - zone_name.len() - 1].to_string()
         } else {
-            self.name.clone()
+            record.name.clone()
         };
 
-        let data = match self.record_type.as_str() {
-            "A" => {
-                let ip: Ipv4Addr = self.content.parse().ok()?;
-                RecordData::A(ip)
-            }
-            "AAAA" => {
-                let ip: Ipv6Addr = self.content.parse().ok()?;
-                RecordData::AAAA(ip)
-            }
-            "CNAME" => RecordData::CNAME(self.content.clone()),
-            "MX" => RecordData::MX {
-                priority: self.priority.unwrap_or(10),
-                mail_server: self.content.clone(),
-            },
-            "NS" => RecordData::NS(self.content.clone()),
-            "TXT" => RecordData::TXT(self.content.clone()),
-            "SRV" => {
-                // SRV records have structured data
-                if let Some(data) = &self.data {
-                    RecordData::SRV {
-                        priority: data.priority.unwrap_or(0),
-                        weight: data.weight.unwrap_or(0),
-                        port: data.port.unwrap_or(0),
-                        target: data.target.clone().unwrap_or_default(),
+        let data =
+            match record.record_type.as_str() {
+                "A" => record.content.parse().map(RecordData::A).map_err(|_| {
+                    RecordConversionError {
+                        record_type: record.record_type.clone(),
+                        reason: "invalid IPv4 address",
                     }
-                } else {
-                    // Fallback: parse from content "priority weight port target"
-                    let parts: Vec<&str> = self.content.split_whitespace().collect();
-                    if parts.len() >= 4 {
+                })?,
+                "AAAA" => record.content.parse().map(RecordData::AAAA).map_err(|_| {
+                    RecordConversionError {
+                        record_type: record.record_type.clone(),
+                        reason: "invalid IPv6 address",
+                    }
+                })?,
+                "CNAME" => RecordData::CNAME(record.content.clone()),
+                "MX" => RecordData::MX {
+                    priority: record.priority.unwrap_or(10),
+                    mail_server: record.content.clone(),
+                },
+                "NS" => RecordData::NS(record.content.clone()),
+                "TXT" => RecordData::TXT(record.content.clone()),
+                "SRV" => {
+                    // SRV records have structured data
+                    if let Some(data) = &record.data {
                         RecordData::SRV {
-                            priority: parts[0].parse().unwrap_or(0),
-                            weight: parts[1].parse().unwrap_or(0),
-                            port: parts[2].parse().unwrap_or(0),
-                            target: parts[3].to_string(),
+                            priority: data.priority.unwrap_or(0),
+                            weight: data.weight.unwrap_or(0),
+                            port: data.port.unwrap_or(0),
+                            target: data.target.clone().unwrap_or_default(),
                         }
                     } else {
-                        return None;
+                        // Fallback: parse from content "priority weight port target"
+                        let parts: Vec<&str> = record.content.split_whitespace().collect();
+                        if parts.len() >= 4 {
+                            RecordData::SRV {
+                                priority: parts[0].parse().unwrap_or(0),
+                                weight: parts[1].parse().unwrap_or(0),
+                                port: parts[2].parse().unwrap_or(0),
+                                target: parts[3].to_string(),
+                            }
+                        } else {
+                            return Err(RecordConversionError {
+                                record_type: record.record_type.clone(),
+                                reason: "SRV record requires 4 parts: priority weight port target",
+                            });
+                        }
                     }
                 }
-            }
-            _ => return None, // Unsupported record type
-        };
+                _ => {
+                    return Err(RecordConversionError {
+                        record_type: record.record_type.clone(),
+                        reason: "unsupported record type",
+                    });
+                }
+            };
 
-        Some(Record {
-            id: self.id.clone(),
+        Ok(crate::Record {
+            id: record.id.clone(),
             host,
             data,
-            ttl: self.ttl as u64,
+            ttl: record.ttl as u64,
         })
     }
 }

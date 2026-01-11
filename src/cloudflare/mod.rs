@@ -45,7 +45,7 @@ pub mod api;
 use std::error::Error as StdErr;
 use std::sync::Arc;
 
-pub use api::{ApiError, Client, CloudflareError};
+pub use api::{ApiError, Client, CloudflareError, DnsRecordWithZone, RecordConversionError};
 
 use crate::{
     CreateRecord, CreateRecordError, DeleteRecord, DeleteRecordError, Provider, Record, RecordData,
@@ -181,7 +181,9 @@ impl Zone for CloudflareZone {
 
         Ok(records
             .into_iter()
-            .filter_map(|r| r.to_record(&self.repr.name))
+            .filter_map(|r| {
+                crate::Record::try_from(api::DnsRecordWithZone::new(&r, &self.repr.name)).ok()
+            })
             .collect())
     }
 
@@ -203,12 +205,14 @@ impl Zone for CloudflareZone {
                 _ => RetrieveRecordError::Custom(err),
             })?;
 
-        record.to_record(&self.repr.name).ok_or_else(|| {
-            RetrieveRecordError::Custom(CloudflareError::Api(ApiError {
-                code: 0,
-                message: format!("Unsupported record type: {}", record.record_type),
-            }))
-        })
+        crate::Record::try_from(api::DnsRecordWithZone::new(&record, &self.repr.name)).map_err(
+            |e| {
+                RetrieveRecordError::Custom(CloudflareError::Api(ApiError {
+                    code: 0,
+                    message: format!("Failed to convert record: {}", e),
+                }))
+            },
+        )
     }
 }
 
@@ -238,12 +242,14 @@ impl CreateRecord for CloudflareZone {
                 _ => CreateRecordError::Custom(err),
             })?;
 
-        record.to_record(&self.repr.name).ok_or_else(|| {
-            CreateRecordError::Custom(CloudflareError::Api(ApiError {
-                code: 0,
-                message: "Failed to parse created record".to_string(),
-            }))
-        })
+        crate::Record::try_from(api::DnsRecordWithZone::new(&record, &self.repr.name)).map_err(
+            |e| {
+                CreateRecordError::Custom(CloudflareError::Api(ApiError {
+                    code: 0,
+                    message: format!("Failed to convert record: {}", e),
+                }))
+            },
+        )
     }
 }
 

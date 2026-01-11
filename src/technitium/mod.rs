@@ -269,11 +269,7 @@ impl Zone for TechnitiumZone {
                     _ => RetrieveRecordError::Custom(err),
                 })?;
 
-        Ok(response
-            .records
-            .into_iter()
-            .map(|record| record.into_generic())
-            .collect())
+        Ok(response.records.into_iter().map(Record::from).collect())
     }
 
     async fn get_record(
@@ -304,7 +300,7 @@ impl Zone for TechnitiumZone {
         response
             .records
             .into_iter()
-            .map(|r| r.into_generic())
+            .map(Record::from)
             .find(|r| {
                 r.data.get_type() == record_type
                     && format!("{:x}", calculate_hash(&r.data.get_value())) == data_hash
@@ -346,7 +342,7 @@ impl CreateRecord for TechnitiumZone {
                 _ => CreateRecordError::Custom(err),
             })?;
 
-        Ok(response.added_record.into_generic())
+        Ok(Record::from(response.added_record))
     }
 }
 
@@ -382,17 +378,16 @@ impl DeleteRecord for TechnitiumZone {
     }
 }
 
-impl api::Record {
-    /// Converts an API record to the generic library Record format.
-    pub fn into_generic(self) -> Record {
-        let data = RecordData::from_raw(&self.record_type, &self.rdata.to_value_string());
+impl From<api::Record> for Record {
+    fn from(record: api::Record) -> Self {
+        let data = RecordData::from_raw(&record.record_type, &record.rdata.to_value_string());
         let data_hash = format!("{:x}", calculate_hash(&data.get_value()));
 
         Record {
-            id: format!("{}:{}:{}", self.name, self.record_type, data_hash),
-            host: self.name,
+            id: format!("{}:{}:{}", record.name, record.record_type, data_hash),
+            host: record.name,
             data,
-            ttl: self.ttl,
+            ttl: record.ttl,
         }
     }
 }
