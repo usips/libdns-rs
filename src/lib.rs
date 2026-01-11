@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
 
+pub mod types;
+
 #[cfg(feature = "dnspod")]
 pub mod dnspod;
 
